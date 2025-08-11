@@ -4,48 +4,80 @@ from node2vec import Node2Vec
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import json
+import os
 
 # -------------------------------
 # Step 1: Load Jobs Dataset
 # -------------------------------
-jobs = pd.read_csv("C:/Users/Ashok/Downloads/jobs.csv")
+def load_jobs_data(csv_path="jobs.csv"):
+    """Load jobs data with proper error handling."""
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Jobs CSV file not found: {csv_path}")
+    
+    try:
+        jobs = pd.read_csv(csv_path)
+        required_columns = ['job_id', 'title', 'company', 'required_skills']
+        missing_columns = [col for col in required_columns if col not in jobs.columns]
+        
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+        
+        print(f"Loaded {len(jobs)} jobs from {csv_path}")
+        return jobs
+    except Exception as e:
+        raise Exception(f"Error loading jobs data: {str(e)}")
 
 # -------------------------------
 # Step 2: Build Knowledge Graph
 # -------------------------------
-G = nx.Graph()
+def build_knowledge_graph(jobs):
+    """Build knowledge graph from jobs data."""
+    G = nx.Graph()
 
-for _, row in jobs.iterrows():
-    job_node = f"job_{row['job_id']}"
-    company_node = f"company_{row['company']}"
+    for _, row in jobs.iterrows():
+        job_node = f"job_{row['job_id']}"
+        company_node = f"company_{row['company']}"
 
-    # Add Job Node
-    G.add_node(job_node, type="job", title=row["title"], company=row["company"])
+        # Add Job Node
+        G.add_node(job_node, type="job", title=row["title"], company=row["company"])
 
-    # Add Company Node
-    G.add_node(company_node, type="company", name=row["company"])
-    G.add_edge(job_node, company_node, relation="POSTED_BY")
+        # Add Company Node
+        G.add_node(company_node, type="company", name=row["company"])
+        G.add_edge(job_node, company_node, relation="POSTED_BY")
 
-    # Add Skill Nodes
-    for skill in row["required_skills"].split(","):
-        skill = skill.strip()
-        skill_node = f"skill_{skill}"
-        G.add_node(skill_node, type="skill", name=skill)
-        G.add_edge(job_node, skill_node, relation="REQUIRES_SKILL")
+        # Add Skill Nodes - handle potential NaN values
+        if pd.notna(row["required_skills"]):
+            for skill in row["required_skills"].split(","):
+                skill = skill.strip()
+                if skill:  # Only add non-empty skills
+                    skill_node = f"skill_{skill}"
+                    G.add_node(skill_node, type="skill", name=skill)
+                    G.add_edge(job_node, skill_node, relation="REQUIRES_SKILL")
 
-print(f"Knowledge Graph built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
+    print(f"Knowledge Graph built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
+    return G
 
 # -------------------------------
 # Step 3: Train Node2Vec Embeddings
 # -------------------------------
-node2vec = Node2Vec(G, dimensions=32, walk_length=20, num_walks=50, workers=1, quiet=True)
-model = node2vec.fit(window=5, min_count=1)
-
-embeddings = {node: model.wv[node].tolist() for node in G.nodes()}
-with open("embeddings.json", "w") as f:
-    json.dump(embeddings, f)
+def train_embeddings(G):
+    """Train Node2Vec embeddings for the knowledge graph."""
+    try:
+        node2vec = Node2Vec(G, dimensions=32, walk_length=20, num_walks=50, workers=1, quiet=True)
+        model = node2vec.fit(window=5, min_count=1)
+        
+        embeddings = {node: model.wv[node].tolist() for node in G.nodes()}
+        print(f"Trained embeddings for {len(embeddings)} nodes")
+        return embeddings
+    except Exception as e:
+        print(f"Warning: Could not train Node2Vec embeddings: {str(e)}")
+        # Fallback to random embeddings
+        embeddings = {node: np.random.normal(scale=0.01, size=32).tolist() for node in G.nodes()}
+        print("Using random embeddings as fallback")
+        return embeddings
 
 def cosine_sim(vec1, vec2):
+    """Calculate cosine similarity between two vectors."""
     v1 = np.array(vec1).reshape(1, -1)
     v2 = np.array(vec2).reshape(1, -1)
     return cosine_similarity(v1, v2)[0][0]
@@ -53,7 +85,8 @@ def cosine_sim(vec1, vec2):
 # -------------------------------
 # Step 4: Query Functions (Jobs & Skills)
 # -------------------------------
-def query_job(job_id, topn=5):
+def query_job(job_id, G, embeddings, topn=5):
+    """Query similar jobs based on job ID."""
     node = f"job_{job_id}"
     if node not in G:
         return {"error": f"Job '{job_id}' not found."}
@@ -82,8 +115,8 @@ def query_job(job_id, topn=5):
         "skills_of_similar_jobs": similar_skills
     }
 
-
-def query_skill(skill_name, topn=5):
+def query_skill(skill_name, G, embeddings, topn=5):
+    """Query related jobs and similar skills based on skill name."""
     node = f"skill_{skill_name}"
     if node not in G:
         return {"error": f"Skill '{skill_name}' not found."}
@@ -115,7 +148,7 @@ def query_skill(skill_name, topn=5):
 # -------------------------------
 # Step 5: Anomaly Detection
 # -------------------------------
-def check_anomaly(skill_name, target_name, max_depth=3, sim_threshold=0.25):
+def check_anomaly(skill_name, target_name, G, embeddings, max_depth=3, sim_threshold=0.25):
     """
     Check if skill logically connects to a job or company.
     Uses:
@@ -153,18 +186,47 @@ def check_anomaly(skill_name, target_name, max_depth=3, sim_threshold=0.25):
     }
 
 # -------------------------------
-# Step 6: Run Example Queries
+# Step 6: Main Execution
 # -------------------------------
-job_result = query_job("1")
-skill_result = query_skill("Python")
-anomaly1 = check_anomaly("Blockchain", "1")  # Skill vs Job
-anomaly2 = check_anomaly("React", "TechCorp")  # Skill vs Company
+def main():
+    """Main function to build KG and run example queries."""
+    try:
+        # Load data
+        jobs = load_jobs_data()
+        
+        # Build KG
+        G = build_knowledge_graph(jobs)
+        
+        # Train embeddings
+        embeddings = train_embeddings(G)
+        
+        # Save KG and embeddings
+        nx.write_gpickle(G, "careerhunt_kg.gpickle")
+        with open("embeddings.json", "w") as f:
+            json.dump(embeddings, f)
+        print("Knowledge Graph and embeddings saved successfully!")
+        
+        # Run example queries
+        job_result = query_job("1", G, embeddings)
+        skill_result = query_skill("Python", G, embeddings)
+        anomaly1 = check_anomaly("Blockchain", "1", G, embeddings)  # Skill vs Job
+        anomaly2 = check_anomaly("React", "TechCorp", G, embeddings)  # Skill vs Company
 
-with open("job_query_result.json", "w") as f:
-    json.dump(job_result, f, indent=2)
-with open("skill_query_result.json", "w") as f:
-    json.dump(skill_result, f, indent=2)
-with open("anomaly_results.json", "w") as f:
-    json.dump([anomaly1, anomaly2], f, indent=2)
+        # Save results
+        with open("job_query_result.json", "w") as f:
+            json.dump(job_result, f, indent=2)
+        with open("skill_query_result.json", "w") as f:
+            json.dump(skill_result, f, indent=2)
+        with open("anomaly_results.json", "w") as f:
+            json.dump([anomaly1, anomaly2], f, indent=2)
 
-print("Results saved: job_query_result.json, skill_query_result.json, anomaly_results.json")
+        print("Results saved: job_query_result.json, skill_query_result.json, anomaly_results.json")
+        
+    except Exception as e:
+        print(f"Error in main execution: {str(e)}")
+        return False
+    
+    return True
+
+if __name__ == "__main__":
+    main()

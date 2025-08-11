@@ -1,0 +1,11 @@
+job_id,title,company,required_skills
+1,Software Engineer,TechCorp,"Python, JavaScript, React"
+2,Data Scientist,DataCorp,"Python, Machine Learning, SQL"
+3,Frontend Developer,WebCorp,"JavaScript, React, CSS"
+4,Backend Developer,APICorp,"Python, Django, PostgreSQL"
+5,DevOps Engineer,CloudCorp,"Docker, Kubernetes, AWS"
+6,Product Manager,ProductCorp,"Agile, Scrum, User Research"
+7,UI/UX Designer,DesignCorp,"Figma, Adobe XD, Prototyping"
+8,Mobile Developer,AppCorp,"React Native, JavaScript, iOS"
+9,QA Engineer,TestCorp,"Selenium, Python, Test Automation"
+10,Full Stack Developer,FullCorp,"React, Node.js, MongoDB" 
