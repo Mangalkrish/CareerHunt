@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import validator from "validator";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -30,6 +31,14 @@ const userSchema = new mongoose.Schema({
     required: [true, "Please select a role"],
     enum: ["Job Seeker", "Employer"],
   },
+  // --- NEW AI FIELD ---
+  lastProcessedApplication: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Application",
+    default: null,
+    // Links to the last application submitted, used for job recommendations
+  },
+  // ---------------------
   createdAt: {
     type: Date,
     default: Date.now,

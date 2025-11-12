@@ -59,6 +59,21 @@ const applicationSchema = new mongoose.Schema({
       required: true,
     },
   },
-});
+  jobId: {
+    type: mongoose.Schema.Types.ObjectId, // CRUCIAL: Link application to job
+    ref: "Job",
+    required: true,
+  },
+  // --- NEW AI FIELDS ---
+  relevanceScore: { // RAG-generated score (0-100)
+    type: Number,
+    default: null,
+  },
+  feedback: { // Personalized feedback from Llama 3
+    type: String,
+    default: null,
+  },
+  // ---------------------
+}, { timestamps: true });
 
 export const Application = mongoose.model("Application", applicationSchema);

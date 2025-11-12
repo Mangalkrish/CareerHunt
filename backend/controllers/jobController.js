@@ -1,6 +1,7 @@
 import { catchAsyncErrors } from "../middlewares/catchAsyncError.js";
 import { Job } from "../models/jobSchema.js";
 import ErrorHandler from "../middlewares/error.js";
+import { processAndEmbedJD, deleteJobFromKG, getAIJobRecommendations } from "../utils/aiService.js"; // IMPORT AI SERVICE
 
 export const getAllJobs = catchAsyncErrors(async (req, res, next) => {
   const jobs = await Job.find({ expired: false });
@@ -10,6 +11,7 @@ export const getAllJobs = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// --- POST JOB (ENHANCED FOR JD PROCESSING) ---
 export const postJob = catchAsyncErrors(async (req, res, next) => {
   const { role } = req.user;
   if (role === "Job Seeker") {
@@ -48,6 +50,8 @@ export const postJob = catchAsyncErrors(async (req, res, next) => {
     );
   }
   const postedBy = req.user._id;
+  
+  // 1. Create Job in MongoDB
   const job = await Job.create({
     title,
     description,
@@ -60,11 +64,56 @@ export const postJob = catchAsyncErrors(async (req, res, next) => {
     salaryTo,
     postedBy,
   });
+
+  // 2. Trigger JD processing (fire-and-forget)
+  // This embeds the JD, extracts skills, and updates the Knowledge Graph.
+  processAndEmbedJD(job._id.toString(), title, description)
+    .catch(err => {
+        console.error(`[JD PROCESSING FAILED] Job ${job._id}: ${err.message}`);
+    });
+    
   res.status(200).json({
     success: true,
-    message: "Job Posted Successfully!",
+    message: "Job Posted Successfully! JD processing started for RAG.",
     job,
   });
+});
+
+// --- JOBSEEKER: GET AI JOB RECOMMENDATIONS ---
+export const getRecommendedJobs = catchAsyncErrors(async (req, res, next) => {
+    const { role } = req.user;
+    if (role === "Employer") {
+        return next(
+            new ErrorHandler("Employer not allowed to access this resource.", 400)
+        );
+    }
+    const userId = req.user._id;
+
+    // 1. Call AI Service for ranked Job IDs (uses KG/Vector similarity)
+    const jobIds = await getAIJobRecommendations(userId);
+    
+    if (!jobIds || jobIds.length === 0) {
+        return res.status(200).json({
+            success: true,
+            message: "No AI recommendations found based on your latest CV.",
+            jobs: [],
+        });
+    }
+
+    // 2. Fetch the full Job documents from MongoDB using the ranked IDs
+    const jobs = await Job.find({
+        _id: { $in: jobIds },
+        expired: false
+    });
+    
+    // Manually sort the results to respect the order from the AI service
+    const sortedJobs = jobIds.map(id => jobs.find(job => job._id.toString() === id)).filter(job => job);
+
+    res.status(200).json({
+        success: true,
+        message: "AI Job Recommendations fetched successfully.",
+        jobs: sortedJobs,
+    });
 });
 
 export const getMyJobs = catchAsyncErrors(async (req, res, next) => {
@@ -81,6 +130,7 @@ export const getMyJobs = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// --- UPDATE JOB (ENHANCED FOR KG UPDATE) ---
 export const updateJob = catchAsyncErrors(async (req, res, next) => {
   const { role } = req.user;
   if (role === "Job Seeker") {
@@ -98,12 +148,22 @@ export const updateJob = catchAsyncErrors(async (req, res, next) => {
     runValidators: true,
     useFindAndModify: false,
   });
+  
+  // Trigger JD processing for the updated description (fire-and-forget)
+  if (req.body.description || req.body.title) {
+      processAndEmbedJD(job._id.toString(), job.title, job.description)
+        .catch(err => {
+            console.error(`[JD UPDATE FAILED] Job ${job._id}: ${err.message}`);
+        });
+  }
+  
   res.status(200).json({
     success: true,
-    message: "Job Updated!",
+    message: "Job Updated! RAG/KG data update triggered.",
   });
 });
 
+// --- DELETE JOB (ENHANCED FOR KG CLEANUP) ---
 export const deleteJob = catchAsyncErrors(async (req, res, next) => {
   const { role } = req.user;
   if (role === "Job Seeker") {
@@ -116,10 +176,17 @@ export const deleteJob = catchAsyncErrors(async (req, res, next) => {
   if (!job) {
     return next(new ErrorHandler("OOPS! Job not found.", 404));
   }
+  
+  // Trigger KG cleanup (fire-and-forget)
+  deleteJobFromKG(id)
+      .catch(err => {
+          console.error(`[KG CLEANUP FAILED] Job ${id}: ${err.message}`);
+      });
+      
   await job.deleteOne();
   res.status(200).json({
     success: true,
-    message: "Job Deleted!",
+    message: "Job Deleted! KG cleanup triggered.",
   });
 });
 
